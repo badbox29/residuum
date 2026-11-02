@@ -11,14 +11,23 @@ import { el, mount, ago } from './dom.js';
 import * as store from './store.js';
 import * as sync from './sync.js';
 import { renderSettings } from './settings.js';
+import { renderAssets, renderAsset, renderAssetForm, renderEventForm } from './assets.js';
 
-const ROUTES = {
-  '': { label: 'Assets', render: renderAssets },
-  'assets': { label: 'Assets', render: renderAssets },
-  'settings': { label: 'Settings', render: renderSettings },
-};
+const NAV = [['assets', 'Things'], ['settings', 'Settings']];
 
-const NAV = [['assets', 'Assets'], ['settings', 'Settings']];
+/**
+ * Hash routing, so the app is a static file with no server rewrites needed —
+ * it works from GitHub Pages, from a local folder, or from a USB stick.
+ */
+function resolve(hash) {
+  const [head, a, b] = hash.split('/');
+  if (head === 'asset' && a && b === 'edit')  return { nav: 'assets', render: r => renderAssetForm(r, a) };
+  if (head === 'asset' && a && b === 'event') return { nav: 'assets', render: r => renderEventForm(r, a) };
+  if (head === 'asset' && a)                  return { nav: 'assets', render: r => renderAsset(r, a) };
+  if (head === 'new')                         return { nav: 'assets', render: r => renderAssetForm(r) };
+  if (head === 'settings')                    return { nav: 'settings', render: renderSettings };
+  return { nav: 'assets', render: renderAssets };
+}
 
 let statusBand;
 let outlet;
@@ -65,16 +74,24 @@ async function boot() {
 }
 
 async function renderRoute() {
-  const hash = location.hash.replace(/^#/, '');
-  const route = ROUTES[hash] || ROUTES[''];
+  const route = resolve(location.hash.replace(/^#/, ''));
 
   for (const a of document.querySelectorAll('.nav a')) {
-    const active = (a.dataset.route === hash) || (hash === '' && a.dataset.route === 'assets');
-    if (active) a.setAttribute('aria-current', 'page');
+    if (a.dataset.route === route.nav) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   }
 
-  await route.render(outlet);
+  try {
+    await route.render(outlet);
+  } catch (err) {
+    // A view that throws should not leave a blank page with the answer only
+    // in the console.
+    console.error(err);
+    mount(outlet, el('div.column', {}, el('section', {},
+      el('h2', {}, 'That page did not load'),
+      el('p.note.bad', {}, String((err && err.message) || err)))));
+  }
+  scrollTo(0, 0);
 }
 
 /**
@@ -112,28 +129,6 @@ async function renderStatus({ state, error }) {
     el('span.status-dot'),
     el('span', {}, headline),
     (error || waiting) && el('span.status-detail', {}, error || waiting));
-}
-
-// ── Views ───────────────────────────────────────────────────────────────────
-
-async function renderAssets(root) {
-  const assets = await store.list('asset');
-
-  if (!assets.length) {
-    mount(root, el('div.column', {},
-      el('div.empty', {},
-        el('h2', {}, 'Start with one thing you look after'),
-        el('p', {},
-          'A furnace, a roof, a truck, a well pump. Residuum keeps what it is, ' +
-          'what has been done to it, and what that cost — for as long as you own it.'),
-        el('p.hint', {}, 'Adding assets lands next.'))));
-    return;
-  }
-
-  mount(root, el('div.column', {},
-    el('section', {},
-      el('h2', {}, `${assets.length} asset${assets.length === 1 ? '' : 's'}`),
-      el('ul', {}, assets.map(a => el('li', {}, a.name))))));
 }
 
 boot();
