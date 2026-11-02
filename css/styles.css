@@ -70,6 +70,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+a {
+  color: var(--patina);
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 0.15em;
+}
+
+a:hover { text-decoration-color: currentColor; }
+
 /* ── Header ──────────────────────────────────────────────────────────────── */
 
 .masthead {
@@ -295,7 +303,9 @@ code, .ident { font-family: var(--mono); font-size: 0.9em; word-break: break-all
   text-decoration: none;
 }
 
+.records a { text-decoration: none; }
 .records a:hover { background: var(--surface); }
+.records a:hover .record-name { text-decoration: underline; text-underline-offset: 0.15em; }
 
 .record-icon { color: var(--patina); font-size: 1.1rem; }
 .record-body { display: flex; flex-direction: column; min-width: 0; }
@@ -312,7 +322,9 @@ code, .ident { font-family: var(--mono); font-size: 0.9em; word-break: break-all
 /* ── Record page ─────────────────────────────────────────────────────────── */
 
 .crumb { margin: 0 0 0.5rem; font-size: var(--step--1); }
-.crumb a { color: var(--ink-faint); }
+.crumb a { color: var(--ink-faint); text-decoration: none; }
+.crumb a::before { content: "← "; }
+.crumb a:hover { color: var(--ink); }
 
 .record-title {
   font-size: var(--step-3);
