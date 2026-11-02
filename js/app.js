@@ -10,7 +10,7 @@
 import { el, mount, ago } from './dom.js';
 import * as store from './store.js';
 import * as sync from './sync.js';
-import { renderSettings } from './views/settings.js';
+import { renderSettings } from './settings.js';
 
 const ROUTES = {
   '': { label: 'Assets', render: renderAssets },

@@ -7,9 +7,9 @@
  * in this browser either way.
  */
 
-import { el, mount, facts } from '../dom.js';
-import * as sync from '../sync.js';
-import * as store from '../store.js';
+import { el, mount, facts } from './dom.js';
+import * as sync from './sync.js';
+import * as store from './store.js';
 
 export async function renderSettings(root) {
   const cfg = await sync.getConfig();
