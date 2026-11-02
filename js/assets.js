@@ -11,41 +11,10 @@ import * as store from './store.js';
 import { buildPut, buildCorrection } from './oplog.js';
 import { template, templatesByCategory, toMetadata, readMetadata } from './templates.js';
 import { splitRevisions } from './merge.js';
+import { resolveVendor, servicerOf, setServicer } from './vendors.js';
+import { context, writeOps } from './actions.js';
 
 const go = hash => { location.hash = hash; };
-
-async function writeOps(ops) {
-  await store.applyLocal(ops);
-  // Opportunistic: if sync is off or offline this does nothing and the
-  // operations wait in the outbox. The write already succeeded regardless.
-  import('./sync.js').then(s => s.syncOnce()).catch(() => {});
-}
-
-async function context() {
-  return { deviceId: await store.deviceId(), accountId: await store.getMeta('account_id') };
-}
-
-/**
- * Find a vendor by company name, or create one.
- *
- * Typing a name is the whole interaction — no separate screen to visit first.
- * The record it creates is still a real vendor, so "everything ABC Heating
- * has ever touched" works from the first time you type it, which is the point
- * of vendors being records rather than text in a note.
- *
- * Returns the vendor id and any operation that needs writing.
- */
-async function resolveVendor(name, ctx) {
-  const company = String(name || '').trim();
-  if (!company) return { vendorId: null, ops: [] };
-
-  const existing = (await store.list('vendor'))
-    .find(v => v.company.toLowerCase() === company.toLowerCase());
-  if (existing) return { vendorId: existing.vendor_id, ops: [] };
-
-  const { op, record } = buildPut('vendor', { company }, ctx);
-  return { vendorId: record.vendor_id, ops: [op] };
-}
 
 // ── List ────────────────────────────────────────────────────────────────────
 
@@ -98,6 +67,9 @@ export async function renderAssetForm(root, assetId = null) {
   const existing = assetId ? await store.get('asset', assetId) : null;
   let slug = existing?.template || 'hvac';
 
+  const servicer = assetId ? await servicerOf(assetId) : null;
+  const knownVendors = await store.list('vendor');
+
   const body = el('div');
   const draw = () => mount(body, fields());
   const note = el('p.note', { hidden: true });
@@ -133,6 +105,16 @@ export async function renderAssetForm(root, assetId = null) {
       textArea('description', 'Notes', existing?.description,
         'Where exactly it is, quirks, anything you would want to remember.'),
 
+      el('div.field', {},
+        el('label', { for: 'servicer' }, 'Who services it'),
+        el('input', {
+          type: 'text', id: 'servicer', list: 'known-vendors',
+          value: servicer?.company || '', placeholder: 'Leave blank if nobody in particular',
+        }),
+        el('datalist', { id: 'known-vendors' },
+          knownVendors.map(v => el('option', { value: v.company }))),
+        el('p.hint', {}, 'Kept as a contact you can open, not just a name here.')),
+
       t.fields.length ? el('h2', { style: 'margin-top:2rem' }, t.name) : null,
       t.fields.map(f => fieldFor(f, val(f.key))),
     );
@@ -152,6 +134,9 @@ export async function renderAssetForm(root, assetId = null) {
     const t = template(slug);
     const values = Object.fromEntries(t.fields.map(f => [f.key, read(f.key)]));
 
+    const ctx = await context();
+    const { vendorId, ops: vendorOps } = await resolveVendor(read('servicer'), ctx);
+
     const { op, record } = buildPut('asset', {
       ...(existing || {}),
       name,
@@ -164,9 +149,10 @@ export async function renderAssetForm(root, assetId = null) {
       description: read('description').trim(),
       metadata: toMetadata(slug, values),
       status: existing?.status || 'active',
-    }, { before: existing, ...(await context()) });
+    }, { before: existing, ...ctx });
 
-    await writeOps([op]);
+    const edgeOps = await setServicer(record.asset_id, vendorId, ctx);
+    await writeOps([...vendorOps, op, ...edgeOps]);
     go(`#asset/${record.asset_id}`);
   };
 
@@ -242,6 +228,7 @@ export async function renderAsset(root, assetId) {
   const { entries: revisions } = splitRevisions(asset.revisions);
 
   const vendors = new Map((await store.list('vendor')).map(v => [v.vendor_id, v.company]));
+  const servicer = await servicerOf(assetId);
 
   mount(root, el('div.column', {},
     el('section', {},
@@ -257,6 +244,9 @@ export async function renderAsset(root, assetId) {
         ['Installed', asset.install_date],
         ...readMetadata(asset.template, asset.metadata).map(r =>
           [r.inTemplate ? r.label : `${r.label} (retired)`, r.value, r.type === 'ident']),
+        ['Serviced by', servicer
+          ? el('a', { href: `#vendor/${servicer.vendor_id}` }, servicer.company)
+          : null],
         ['Spent so far', spent ? money(spent) : null],
       ]),
 
@@ -288,7 +278,9 @@ function timeline(assetId, events, live, t, vendors) {
           ? el('span.entry-who', {}, vendors.get(e.vendor_id)) : null,
         e.notes ? el('span.entry-notes', {}, e.notes) : null,
         e.supersedes ? el('span.entry-flag', {}, 'corrects an earlier entry') : null),
-      el('span.entry-cost', {}, e.cost ? money(e.cost) : ''))))); 
+      el('span.entry-cost', {},
+        e.cost ? money(e.cost) : '',
+        el('a.entry-fix', { href: `#asset/${assetId}/event/${e.event_id}` }, 'Correct'))))));
 }
 
 /**

@@ -12,19 +12,28 @@ import * as store from './store.js';
 import * as sync from './sync.js';
 import { renderSettings } from './settings.js';
 import { renderAssets, renderAsset, renderAssetForm, renderEventForm } from './assets.js';
+import { renderVendors, renderVendor, renderVendorForm } from './vendors.js';
 
-const NAV = [['assets', 'Things'], ['settings', 'Settings']];
+const NAV = [['assets', 'Things'], ['vendors', 'Contacts'], ['settings', 'Settings']];
 
 /**
  * Hash routing, so the app is a static file with no server rewrites needed —
  * it works from GitHub Pages, from a local folder, or from a USB stick.
  */
 function resolve(hash) {
-  const [head, a, b] = hash.split('/');
+  const [head, a, b, c] = hash.split('/');
+
   if (head === 'asset' && a && b === 'edit')  return { nav: 'assets', render: r => renderAssetForm(r, a) };
-  if (head === 'asset' && a && b === 'event') return { nav: 'assets', render: r => renderEventForm(r, a) };
+  // With a third segment this is a correction to that entry, not a new one.
+  if (head === 'asset' && a && b === 'event') return { nav: 'assets', render: r => renderEventForm(r, a, c || null) };
   if (head === 'asset' && a)                  return { nav: 'assets', render: r => renderAsset(r, a) };
   if (head === 'new')                         return { nav: 'assets', render: r => renderAssetForm(r) };
+
+  if (head === 'vendor' && a && b === 'edit') return { nav: 'vendors', render: r => renderVendorForm(r, a) };
+  if (head === 'vendor' && a)                 return { nav: 'vendors', render: r => renderVendor(r, a) };
+  if (head === 'vendor-new')                  return { nav: 'vendors', render: r => renderVendorForm(r) };
+  if (head === 'vendors')                     return { nav: 'vendors', render: renderVendors };
+
   if (head === 'settings')                    return { nav: 'settings', render: renderSettings };
   return { nav: 'assets', render: renderAssets };
 }
