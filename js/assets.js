@@ -25,6 +25,28 @@ async function context() {
   return { deviceId: await store.deviceId(), accountId: await store.getMeta('account_id') };
 }
 
+/**
+ * Find a vendor by company name, or create one.
+ *
+ * Typing a name is the whole interaction — no separate screen to visit first.
+ * The record it creates is still a real vendor, so "everything ABC Heating
+ * has ever touched" works from the first time you type it, which is the point
+ * of vendors being records rather than text in a note.
+ *
+ * Returns the vendor id and any operation that needs writing.
+ */
+async function resolveVendor(name, ctx) {
+  const company = String(name || '').trim();
+  if (!company) return { vendorId: null, ops: [] };
+
+  const existing = (await store.list('vendor'))
+    .find(v => v.company.toLowerCase() === company.toLowerCase());
+  if (existing) return { vendorId: existing.vendor_id, ops: [] };
+
+  const { op, record } = buildPut('vendor', { company }, ctx);
+  return { vendorId: record.vendor_id, ops: [op] };
+}
+
 // ── List ────────────────────────────────────────────────────────────────────
 
 export async function renderAssets(root) {
@@ -108,6 +130,8 @@ export async function renderAssetForm(root, assetId = null) {
       textField('serial', 'Serial', existing?.serial, { mono: true }),
       textField('install_date', 'Installed', existing?.install_date,
         { placeholder: '2011-06, or just 2011' }),
+      textArea('description', 'Notes', existing?.description,
+        'Where exactly it is, quirks, anything you would want to remember.'),
 
       t.fields.length ? el('h2', { style: 'margin-top:2rem' }, t.name) : null,
       t.fields.map(f => fieldFor(f, val(f.key))),
@@ -137,6 +161,7 @@ export async function renderAssetForm(root, assetId = null) {
       model: read('model').trim(),
       serial: read('serial').trim(),
       install_date: read('install_date').trim(),
+      description: read('description').trim(),
       metadata: toMetadata(slug, values),
       status: existing?.status || 'active',
     }, { before: existing, ...(await context()) });
@@ -158,6 +183,13 @@ export async function renderAssetForm(root, assetId = null) {
       note)));
 
   draw();
+}
+
+function textArea(id, label, value, hint) {
+  return el('div.field', {},
+    el('label', { for: id }, label),
+    el('textarea', { id, rows: 3 }, value || ''),
+    hint ? el('p.hint', {}, hint) : null);
 }
 
 function textField(id, label, value, { required, placeholder, mono } = {}) {
@@ -209,11 +241,14 @@ export async function renderAsset(root, assetId) {
   const spent = live.reduce((n, e) => n + (e.cost || 0), 0);
   const { entries: revisions } = splitRevisions(asset.revisions);
 
+  const vendors = new Map((await store.list('vendor')).map(v => [v.vendor_id, v.company]));
+
   mount(root, el('div.column', {},
     el('section', {},
       el('p.crumb', {}, el('a', { href: '#assets' }, 'All things')),
       el('h2.record-title', {}, asset.name),
       el('p.lede', {}, [t.name, asset.room].filter(Boolean).join(' · ')),
+      asset.description ? el('p.description', {}, asset.description) : null,
 
       facts([
         ['Make', asset.manufacturer],
@@ -229,12 +264,12 @@ export async function renderAsset(root, assetId) {
         el('button', { onclick: () => go(`#asset/${assetId}/event`) }, 'Record something'),
         el('button.quiet', { onclick: () => go(`#asset/${assetId}/edit`) }, 'Edit details'))),
 
-    el('section', {}, timeline(assetId, events, live, t)),
+    el('section', {}, timeline(assetId, events, live, t, vendors)),
     revisions.length > 1 ? el('section', {}, history(revisions)) : null,
   ));
 }
 
-function timeline(assetId, events, live, t) {
+function timeline(assetId, events, live, t, vendors) {
   if (!live.length) {
     return el('div', {},
       el('h2', {}, 'History'),
@@ -243,18 +278,17 @@ function timeline(assetId, events, live, t) {
         'here stays for as long as you own this.'));
   }
 
-  const superseded = new Map(events.filter(e => e.supersedes).map(e => [e.supersedes, e]));
-
   return el('div', {},
     el('h2', {}, `History — ${live.length} entr${live.length === 1 ? 'y' : 'ies'}`),
     el('ol.timeline', {}, live.map(e => el('li.entry', {},
       el('span.entry-date', {}, e.occurred_on),
       el('span.entry-body', {},
         el('span.entry-type', {}, e.type),
+        e.vendor_id && vendors.get(e.vendor_id)
+          ? el('span.entry-who', {}, vendors.get(e.vendor_id)) : null,
         e.notes ? el('span.entry-notes', {}, e.notes) : null,
         e.supersedes ? el('span.entry-flag', {}, 'corrects an earlier entry') : null),
-      el('span.entry-cost', {}, e.cost ? money(e.cost) : '')))),
-    void superseded);
+      el('span.entry-cost', {}, e.cost ? money(e.cost) : ''))))); 
 }
 
 /**
@@ -311,14 +345,28 @@ export async function renderEventForm(root, assetId, correctsId = null) {
   });
   const notes = el('input', { type: 'text', id: 'notes', value: corrects?.notes || '' });
 
+  const vendors = await store.list('vendor');
+  const priorVendor = corrects?.vendor_id
+    ? vendors.find(v => v.vendor_id === corrects.vendor_id)
+    : null;
+  const who = el('input', {
+    type: 'text', id: 'vendor', list: 'vendor-names',
+    value: priorVendor?.company || '',
+    placeholder: 'Company or person, if anyone',
+  });
+  const vendorList = el('datalist', { id: 'vendor-names' },
+    vendors.map(v => el('option', { value: v.company })));
+
   const save = el('button', {}, corrects ? 'Save correction' : 'Record it');
   save.onclick = async () => {
     const ctx = await context();
+    const { vendorId, ops: vendorOps } = await resolveVendor(who.value, ctx);
     const changes = {
       type: type.value.trim() || 'Note',
       occurred_on: when.value.trim(),
       cost: cost.value.trim() ? Math.round(Number(cost.value) * 100) : null,
       notes: notes.value.trim(),
+      vendor_id: vendorId,
     };
 
     if (corrects) {
@@ -326,10 +374,10 @@ export async function renderEventForm(root, assetId, correctsId = null) {
       // supersedes it, so the archive stays accurate without losing what it
       // said before.
       const { ops } = buildCorrection(corrects, changes, ctx);
-      await writeOps(ops);
+      await writeOps([...vendorOps, ...ops]);
     } else {
       const { op } = buildPut('event', { asset_id: assetId, ...changes }, ctx);
-      await writeOps([op]);
+      await writeOps([...vendorOps, op]);
     }
     go(`#asset/${assetId}`);
   };
@@ -345,6 +393,8 @@ export async function renderEventForm(root, assetId, correctsId = null) {
       el('div.field', {}, el('label', { for: 'type' }, 'What happened'), type, list),
       el('div.field', {}, el('label', { for: 'when' }, 'When'), when,
         el('p.hint', {}, 'A year on its own is fine if that is all you know.')),
+      el('div.field', {}, el('label', { for: 'vendor' }, 'Who did it'), who, vendorList,
+        el('p.hint', {}, 'Kept as a contact, so you can see everything they have worked on.')),
       el('div.field', {}, el('label', { for: 'cost' }, 'Cost'), cost),
       el('div.field', {}, el('label', { for: 'notes' }, 'Notes'), notes),
 
