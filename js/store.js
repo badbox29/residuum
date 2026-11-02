@@ -16,7 +16,7 @@ import { applyOp } from './oplog.js';
 import { newDeviceId } from './ids.js';
 
 const DB_NAME = 'residuum';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 /**
  * Pending operations waiting to be pushed, and the sync cursor, live in their
@@ -28,6 +28,22 @@ const DB_VERSION = 1;
  */
 const OUTBOX = 'outbox';
 const META = 'meta';
+
+/**
+ * Blob bytes, and which of them still need uploading.
+ *
+ * Bytes live here rather than travelling through the oplog: a photo is large,
+ * immutable, and content-addressed, so it has no version to conflict over and
+ * nothing to merge. The oplog carries only the small Document record that
+ * points at a hash.
+ *
+ * THUMBS is derived and deliberately never synced. Each device regenerates
+ * its own, which costs a moment once and saves maintaining a second copy of
+ * every image that could fall out of step with the first.
+ */
+const BLOBS = 'blobs';
+const UPLOADS = 'uploads';
+const THUMBS = 'thumbs';
 
 let dbPromise = null;
 
@@ -52,6 +68,11 @@ export function openDb(name = DB_NAME) {
       }
       if (!db.objectStoreNames.contains(META)) {
         db.createObjectStore(META, { keyPath: 'key' });
+      }
+      for (const name of [BLOBS, UPLOADS, THUMBS]) {
+        if (!db.objectStoreNames.contains(name)) {
+          db.createObjectStore(name, { keyPath: 'sha256' });
+        }
       }
       void ev;
     };
@@ -226,6 +247,55 @@ export async function clearOutbox(opIds) {
 export async function oldestPending() {
   const pending = await outbox(1);
   return pending.length ? pending[0].client_at : null;
+}
+
+// ── Blobs ───────────────────────────────────────────────────────────────────
+
+export async function putBlob(sha256, blob, { queueUpload = true } = {}) {
+  return tx([BLOBS, UPLOADS], 'readwrite', async t => {
+    await wrap(t.objectStore(BLOBS).put({
+      sha256, blob, mime: blob.type, size: blob.size, at: Date.now(),
+    }));
+    // Queued in the same transaction as the bytes. Separately, a crash
+    // between them leaves either a photo that never uploads or an upload
+    // queued for bytes that were never stored.
+    if (queueUpload) {
+      await wrap(t.objectStore(UPLOADS).put({ sha256, at: Date.now() }));
+    }
+  });
+}
+
+export async function getBlob(sha256) {
+  const row = await tx([BLOBS], 'readonly', t => wrap(t.objectStore(BLOBS).get(sha256)));
+  return row ? row.blob : null;
+}
+
+export async function hasBlob(sha256) {
+  const n = await tx([BLOBS], 'readonly', t => wrap(t.objectStore(BLOBS).count(sha256)));
+  return n > 0;
+}
+
+export async function pendingUploads(limit = 20) {
+  const all = await tx([UPLOADS], 'readonly', t => wrap(t.objectStore(UPLOADS).getAll()));
+  all.sort((a, b) => (a.at || 0) - (b.at || 0));
+  return all.slice(0, limit).map(r => r.sha256);
+}
+
+export async function pendingUploadCount() {
+  return tx([UPLOADS], 'readonly', t => wrap(t.objectStore(UPLOADS).count()));
+}
+
+export async function clearUpload(sha256) {
+  return tx([UPLOADS], 'readwrite', t => wrap(t.objectStore(UPLOADS).delete(sha256)));
+}
+
+export async function putThumb(sha256, dataUrl) {
+  return tx([THUMBS], 'readwrite', t => wrap(t.objectStore(THUMBS).put({ sha256, dataUrl })));
+}
+
+export async function getThumb(sha256) {
+  const row = await tx([THUMBS], 'readonly', t => wrap(t.objectStore(THUMBS).get(sha256)));
+  return row ? row.dataUrl : null;
 }
 
 // ── Meta ────────────────────────────────────────────────────────────────────

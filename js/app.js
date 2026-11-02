@@ -119,9 +119,14 @@ async function renderStatus({ state, error }) {
   }
 
   const pending = await sync.pendingSummary();
-  const waiting = pending.count
-    ? `${pending.count} change${pending.count === 1 ? '' : 's'} waiting, oldest ${ago(pending.oldest)}`
-    : null;
+  const parts = [];
+  if (pending.count) {
+    parts.push(`${pending.count} change${pending.count === 1 ? '' : 's'} waiting, oldest ${ago(pending.oldest)}`);
+  }
+  if (pending.files) {
+    parts.push(`${pending.files} file${pending.files === 1 ? '' : 's'} still uploading`);
+  }
+  const waiting = parts.join(' · ') || null;
 
   const headline = {
     [sync.SyncState.SYNCING]: 'Syncing',

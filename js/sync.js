@@ -164,22 +164,30 @@ async function signingKey(writeKey) {
     base, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
 }
 
-async function sign(method, path, accountId, writeKey, timestamp, body) {
-  const bodyHash = await sha256Hex(body || '');
-  const message = [method, path, accountId, timestamp, bodyHash].join(':');
+async function sign(method, path, accountId, writeKey, timestamp, bodyBytes) {
+  // Bytes, not text. The Worker hashes the raw request body, and a photo is
+  // not valid UTF-8 — decoding it to a string first would hash something
+  // other than what was sent, so no upload could ever verify.
+  const message = [method, path, accountId, timestamp, await sha256Bytes(bodyBytes)].join(':');
   const key = await signingKey(writeKey);
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
   return hex(new Uint8Array(sig));
 }
 
 async function apiFetch(method, path, body = null) {
+  const payload = body == null ? null : new TextEncoder().encode(JSON.stringify(body));
+  return signedFetch(method, path, payload, body == null ? null : 'application/json');
+}
+
+/** The one place a signed request is built, for JSON and binary alike. */
+async function signedFetch(method, path, bytes, contentType) {
   const { url, accountId, writeKey } = await getConfig();
   if (!url) throw new Error('no Worker configured');
 
-  const payload = body == null ? '' : JSON.stringify(body);
+  const payload = bytes || new Uint8Array(0);
   const timestamp = String(Date.now());
-  // Sign only the path, never the query string — the Worker signs the same,
-  // and a mismatch here is the hardest kind of bug to find.
+  // Sign the path only, never the query string — the Worker signs
+  // url.pathname, and a mismatch here is the hardest kind of bug to find.
   const pathOnly = path.split('?')[0];
   const signature = await sign(method, pathOnly, accountId, writeKey, timestamp, payload);
 
@@ -190,12 +198,12 @@ async function apiFetch(method, path, body = null) {
   };
   const deviceId = await store.deviceId();
   if (deviceId) headers['X-Device'] = deviceId;
-  if (payload) headers['Content-Type'] = 'application/json';
+  if (contentType) headers['Content-Type'] = contentType;
 
   return fetch(`${url}${path}`, {
     method,
     headers,
-    body: payload || undefined,
+    body: payload.byteLength ? payload : undefined,
   });
 }
 
@@ -219,6 +227,7 @@ export async function syncOnce({ force = false } = {}) {
   setState(SyncState.SYNCING);
   try {
     await pushPending();
+    await pushBlobs();
     await pullNew();
     setState(SyncState.SYNCED);
     return true;
@@ -246,6 +255,62 @@ async function pushPending() {
     if (ops.length < PUSH_BATCH) return;
     if (!confirmed.length) throw new Error('the server accepted nothing; stopping to avoid a loop');
   }
+}
+
+/**
+ * Upload any files this device holds that the Worker does not.
+ *
+ * Asks first. Content addressing means another device may already have
+ * uploaded the identical bytes, and a photo is worth far more than the
+ * request it takes to check.
+ *
+ * A failure here is not allowed to fail the whole sync: the record pointing
+ * at the file has already synced, and the bytes catching up later is a much
+ * smaller problem than a sync that stops because one photo would not upload.
+ */
+async function pushBlobs() {
+  const pending = await store.pendingUploads(20);
+  if (!pending.length) return;
+
+  let have = new Set();
+  try {
+    const res = await apiFetch('POST', '/blob/check', { hashes: pending });
+    if (res.ok) have = new Set((await res.json()).have || []);
+  } catch {
+    // Fall through and attempt the uploads anyway.
+  }
+
+  for (const sha of pending) {
+    if (have.has(sha)) { await store.clearUpload(sha); continue; }
+
+    const blob = await store.getBlob(sha);
+    if (!blob) { await store.clearUpload(sha); continue; }
+
+    try {
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      const res = await signedFetch('PUT', `/blob/${sha}`, bytes,
+        blob.type || 'application/octet-stream');
+      if (res.ok) await store.clearUpload(sha);
+      else if (res.status === 413 || res.status === 400) {
+        // The Worker will never accept this one; leaving it queued would
+        // retry it forever. The bytes stay on this device either way.
+        console.warn(`[sync] ${sha} rejected by the Worker, giving up on uploading it`);
+        await store.clearUpload(sha);
+      } else {
+        return;   // transient — stop and try again next time
+      }
+    } catch {
+      return;
+    }
+  }
+}
+
+/** Fetch one file's bytes. Used by blobs.js when a device lacks them. */
+export async function downloadBlob(sha) {
+  if (!(await isConfigured())) return null;
+  const res = await apiFetch('GET', `/blob/${sha}`);
+  if (!res.ok) return null;
+  return res.blob();
 }
 
 async function pullNew() {
@@ -312,8 +377,9 @@ const onVisible = () => {
  */
 export async function pendingSummary() {
   const count = await store.outboxCount();
+  const files = await store.pendingUploadCount();
   const oldest = await store.oldestPending();
-  return { count, oldest, ageMs: oldest ? Date.now() - oldest : 0 };
+  return { count, files, oldest, ageMs: oldest ? Date.now() - oldest : 0 };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -341,7 +407,6 @@ async function errorText(res) {
 
 const hex = bytes => [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
 
-async function sha256Hex(text) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return hex(new Uint8Array(digest));
+async function sha256Bytes(bytes) {
+  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
 }

@@ -13,6 +13,7 @@ import { template, templatesByCategory, toMetadata, readMetadata } from './templ
 import { splitRevisions } from './merge.js';
 import { resolveVendor, servicerOf, setServicer } from './vendors.js';
 import { context, writeOps } from './actions.js';
+import { attach, thumbFor, urlFor, humanSize } from './blobs.js';
 
 const go = hash => { location.hash = hash; };
 
@@ -254,6 +255,7 @@ export async function renderAsset(root, assetId) {
         el('button', { onclick: () => go(`#asset/${assetId}/event`) }, 'Record something'),
         el('button.quiet', { onclick: () => go(`#asset/${assetId}/edit`) }, 'Edit details'))),
 
+    el('section', {}, await attachments(root, assetId)),
     el('section', {}, timeline(assetId, events, live, t, vendors)),
     revisions.length > 1 ? el('section', {}, history(revisions)) : null,
   ));
@@ -281,6 +283,94 @@ function timeline(assetId, events, live, t, vendors) {
       el('span.entry-cost', {},
         e.cost ? money(e.cost) : '',
         el('a.entry-fix', { href: `#asset/${assetId}/event/${e.event_id}` }, 'Correct'))))));
+}
+
+/**
+ * Photos and documents.
+ *
+ * A photograph of a nameplate is often better evidence than anything typed
+ * from it: faster to capture, impossible to mistype, and in fifteen years
+ * when the sticker has faded or been painted over it is the only copy left.
+ */
+async function attachments(root, assetId) {
+  const docs = (await store.list('document', { index: 'attached_to_id', value: assetId }))
+    .sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+
+  const picker = el('input', {
+    type: 'file', id: 'files', multiple: true,
+    // `capture` is deliberately absent: on a phone this offers the camera and
+    // the library both, and the photo of the plate may well already be taken.
+    accept: 'image/*,application/pdf',
+    style: 'display:none',
+  });
+
+  const status = el('p.note', { hidden: true });
+  const say = (msg, kind = '') => {
+    status.className = `note ${kind}`.trim();
+    status.textContent = msg;
+    status.hidden = !msg;
+  };
+
+  picker.onchange = async () => {
+    const files = [...picker.files];
+    if (!files.length) return;
+    say(`Saving ${files.length} file${files.length === 1 ? '' : 's'}…`);
+    try {
+      const ctx = await context();
+      const ops = [];
+      for (const file of files) {
+        ops.push(await attach(file, {
+          attachedToType: 'asset', attachedToId: assetId,
+        }, ctx));
+      }
+      await writeOps(ops);
+      renderAsset(root, assetId);
+    } catch (err) {
+      say(err.message || String(err), 'bad');
+    }
+  };
+
+  const addBtn = el('button.quiet', { onclick: () => picker.click() },
+    docs.length ? 'Add more' : 'Add a photo or document');
+
+  return el('div', {},
+    el('div.row-between', {},
+      el('h2', {}, docs.length
+        ? `Photos and documents — ${docs.length}`
+        : 'Photos and documents'),
+      addBtn),
+    docs.length
+      ? el('ul.gallery', {}, docs.map(d => tile(d)))
+      : el('p.lede', {},
+          'A photo of the nameplate saves retyping a serial, and outlasts the sticker.'),
+    picker, status);
+}
+
+function tile(doc) {
+  const figure = el('figure.tile', {},
+    el('div.tile-img', {}, el('span.tile-fallback', {}, doc.kind === 'photo' ? '◫' : '▤')),
+    el('figcaption', {},
+      el('span.tile-name', {}, doc.filename || doc.kind),
+      el('span.tile-meta', {}, humanSize(doc.byte_size || 0))));
+
+  // Thumbnails and full bytes load after paint — a record with twelve photos
+  // should render immediately and fill in, not wait on IndexedDB reads.
+  thumbFor(doc.sha256).then(src => {
+    if (!src) return;
+    mount(figure.querySelector('.tile-img'),
+      el('img', { src, alt: doc.caption || doc.filename || 'Attached photo', loading: 'lazy' }));
+  }).catch(() => {});
+
+  figure.querySelector('.tile-img').onclick = async () => {
+    try {
+      const url = await urlFor(doc.sha256);
+      if (url) window.open(url, '_blank', 'noopener');
+    } catch (err) {
+      alert(err.message || String(err));
+    }
+  };
+
+  return el('li', {}, figure);
 }
 
 /**
