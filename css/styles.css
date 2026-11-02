@@ -410,3 +410,31 @@ textarea {
 }
 
 textarea:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+
+/* ── Correcting an entry ─────────────────────────────────────────────────── */
+/*
+ * Quiet until you look for it. Correcting is a normal and honest thing to do,
+ * but it is not the reason anyone opens a record, so it should not compete
+ * with the history itself.
+ */
+
+.entry-fix {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--ink-faint);
+  font-size: var(--step--1);
+  text-decoration: none;
+  opacity: 0;
+}
+
+.entry:hover .entry-fix,
+.entry-fix:focus-visible { opacity: 1; }
+
+.entry-fix:hover { color: var(--patina); text-decoration: underline; }
+
+/* Touch devices have no hover, so it is simply always visible there. */
+@media (hover: none) {
+  .entry-fix { opacity: 1; }
+}
+
+.entry-who a { color: inherit; }
