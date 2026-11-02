@@ -1,3 +1,273 @@
-/* Residuum — styles land with the UI. Placeholder so the <link> resolves. */
-:root { color-scheme: light dark; }
-body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem; }
+/**
+ * Residuum.
+ *
+ * Palette is drawn from the subject: oxidized copper, slate, laminated
+ * equipment tags. Patina is what happens to maintained metal over decades,
+ * which is the whole premise of the thing.
+ *
+ * No webfonts. An archive that has to work in a basement with no signal
+ * should not need a CDN to render, so personality comes from the type scale
+ * and weight contrast instead of a downloaded family.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --paper:     #e7eaeb;
+  --surface:   #f7f8f8;
+  --sunk:      #dde2e3;
+  --ink:       #1b2327;
+  --ink-soft:  #4a5a61;
+  --ink-faint: #76868d;
+  --rule:      #c6cfd2;
+
+  --patina:      #1f6d5c;
+  --patina-soft: #e2efeb;
+  --rust:        #9d4e2a;
+  --rust-soft:   #f6e7e0;
+
+  --r: 4px;
+  --measure: 64ch;
+
+  --step--1: 0.8125rem;
+  --step-0:  0.9375rem;
+  --step-1:  1.125rem;
+  --step-2:  1.5rem;
+  --step-3:  2rem;
+
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:     #12171a;
+    --surface:   #1a2124;
+    --sunk:      #0d1113;
+    --ink:       #dfe5e6;
+    --ink-soft:  #a3b1b6;
+    --ink-faint: #76868d;
+    --rule:      #2c3639;
+
+    --patina:      #52b79e;
+    --patina-soft: #16322c;
+    --rust:        #d2825c;
+    --rust-soft:   #33201a;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+
+body {
+  margin: 0;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--paper);
+  color: var(--ink);
+  font: var(--step-0)/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.masthead {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 1.5rem 1.5rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.wordmark {
+  margin: 0;
+  font-size: var(--step-2);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.tagline { margin: 0; color: var(--ink-faint); font-size: var(--step--1); }
+
+.nav {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+  overflow-x: auto;
+}
+
+.nav a {
+  padding: 0.6rem 0.75rem;
+  color: var(--ink-soft);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.nav a:hover { color: var(--ink); }
+
+.nav a[aria-current="page"] {
+  color: var(--ink);
+  border-bottom-color: var(--patina);
+  font-weight: 550;
+}
+
+/* ── Sync status band ────────────────────────────────────────────────────── */
+/*
+ * The one loud element. A sync that fails quietly is worse than one that
+ * fails visibly: the person keeps working and keeps believing their edits are
+ * somewhere other than this one browser. So it is a band across the page, not
+ * a toast that disappears.
+ */
+
+.status {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 1.5rem;
+  font-size: var(--step--1);
+  border-bottom: 1px solid var(--rule);
+}
+
+.status[hidden] { display: none; }
+
+.status-dot {
+  width: 0.5rem; height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+  align-self: center;
+}
+
+.status-detail { color: var(--ink-faint); }
+
+.status[data-state="synced"]  { background: var(--patina-soft); color: var(--patina); }
+.status[data-state="syncing"] { background: var(--patina-soft); color: var(--patina); }
+.status[data-state="idle"]    { background: var(--sunk);        color: var(--ink-soft); }
+.status[data-state="offline"] { background: var(--sunk);        color: var(--ink-soft); }
+.status[data-state="failed"],
+.status[data-state="auth-required"] { background: var(--rust-soft); color: var(--rust); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .status[data-state="syncing"] .status-dot { animation: pulse 1.4s ease-in-out infinite; }
+}
+@keyframes pulse { 50% { opacity: 0.25; } }
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+
+main { padding: 2rem 1.5rem 4rem; }
+.column { max-width: var(--measure); }
+
+h2 {
+  margin: 0 0 0.25rem;
+  font-size: var(--step-1);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.lede { margin: 0 0 1.25rem; color: var(--ink-soft); }
+
+/*
+ * Sections are separated by space and a rule rather than chopped into
+ * identical cards. Hierarchy comes from spacing, not a border-radius applied
+ * uniformly to everything on the page.
+ */
+section + section {
+  margin-top: 2.5rem;
+  padding-top: 2.5rem;
+  border-top: 1px solid var(--rule);
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────────── */
+
+label { display: block; margin-bottom: 0.3rem; font-weight: 550; font-size: var(--step--1); }
+.hint { margin: 0.3rem 0 0; color: var(--ink-faint); font-size: var(--step--1); }
+
+input[type="text"], input[type="url"] {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+input:focus-visible, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.field { margin-bottom: 1rem; }
+.actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
+
+button {
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--patina);
+  border-radius: var(--r);
+  background: var(--patina);
+  color: var(--surface);
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) { filter: brightness(1.1); }
+button:disabled { opacity: 0.5; cursor: default; }
+button.quiet  { background: transparent; border-color: var(--rule); color: var(--ink); }
+button.danger { background: transparent; border-color: var(--rust); color: var(--rust); }
+
+/* ── Identifiers ─────────────────────────────────────────────────────────── */
+/*
+ * Monospace only where characters genuinely get compared one at a time —
+ * serials, model numbers, sync codes. Not as a styling tic on small labels.
+ */
+
+code, .ident { font-family: var(--mono); font-size: 0.9em; word-break: break-all; }
+
+.code-block {
+  display: block;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  background: var(--sunk);
+  user-select: all;
+}
+
+/* ── Messages ────────────────────────────────────────────────────────────── */
+
+.note {
+  margin: 1rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border-left: 3px solid var(--rule);
+  background: var(--surface);
+  font-size: var(--step--1);
+}
+
+.note.bad  { border-left-color: var(--rust);   background: var(--rust-soft);   color: var(--rust); }
+.note.good { border-left-color: var(--patina); background: var(--patina-soft); color: var(--patina); }
+.note[hidden] { display: none; }
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+
+.empty { padding: 3rem 0; max-width: 44ch; }
+.empty h2 { font-size: var(--step-3); font-weight: 650; letter-spacing: -0.025em; }
+.empty p { color: var(--ink-soft); }
+
+/* ── Fact list ───────────────────────────────────────────────────────────── */
+
+.facts { margin: 0; padding: 0; }
+.facts div { display: flex; gap: 1rem; padding: 0.5rem 0; border-bottom: 1px solid var(--rule); }
+.facts dt { flex: 0 0 11rem; color: var(--ink-faint); font-size: var(--step--1); }
+.facts dd { margin: 0; }
+
+@media (max-width: 34rem) {
+  .masthead, main, .status { padding-left: 1rem; padding-right: 1rem; }
+  .facts div { flex-direction: column; gap: 0.1rem; }
+  .facts dt { flex: none; }
+}
