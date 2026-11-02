@@ -310,17 +310,31 @@ async function authenticate(request, env, url) {
   const writeKey = await getWriteKey(env, accountId);
   if (!writeKey) return { ok: false, status: 401, error: 'unknown account' };
 
-  // Read the body once and hand it on; a Request body cannot be read twice.
-  const body = request.method === 'GET' ? '' : await request.text();
-  if (body.length > MAX_BODY) return { ok: false, status: 413, error: 'body too large' };
+  // Read the body once, as BYTES, and hand it on; a Request body cannot be
+  // read twice.
+  //
+  // Bytes rather than text because an uploaded photo is not valid UTF-8:
+  // decoding it would replace invalid sequences and hash something other than
+  // what was sent, so no binary upload could ever verify. The client hashes
+  // the same bytes — for JSON that is the UTF-8 encoding of the string, which
+  // is exactly what arrives here.
+  const bytes = request.method === 'GET'
+    ? new Uint8Array(0)
+    : new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength > MAX_BLOB) return { ok: false, status: 413, error: 'body too large' };
 
-  const message = [request.method, url.pathname, accountId, timestamp, await sha256Hex(body)].join(':');
+  const message = [request.method, url.pathname, accountId, timestamp, await sha256Bytes(bytes)].join(':');
   const key = await signingKey(writeKey);
   const valid = await crypto.subtle.verify(
     'HMAC', key, hexToBytes(signature), new TextEncoder().encode(message));
 
   if (!valid) return { ok: false, status: 401, error: 'bad signature' };
-  return { ok: true, accountId, deviceId, body };
+  return {
+    ok: true, accountId, deviceId, bytes,
+    // Decoded only when a handler asks, so a 20 MB upload is never turned
+    // into a 20 MB string on its way past.
+    text: () => new TextDecoder().decode(bytes),
+  };
 }
 
 // ── Sync ────────────────────────────────────────────────────────────────────
@@ -364,7 +378,8 @@ async function handlePull(request, env, url, auth) {
  * archive is a quiet corruption, not a visible error.
  */
 async function handlePush(request, env, auth) {
-  const body = parseJson(auth.body);
+  if (auth.bytes.byteLength > MAX_BODY) return json({ error: 'body too large' }, 413);
+  const body = parseJson(auth.text());
   const ops = body && body.ops;
   if (!Array.isArray(ops)) return json({ error: 'ops must be an array' }, 400);
   if (ops.length > MAX_OPS) return json({ error: `at most ${MAX_OPS} ops per push` }, 413);
@@ -438,7 +453,7 @@ const blobKey = (accountId, sha) => `${accountId}/blob/${sha}`;
 /** Ask which hashes are already stored, so known files are never re-uploaded. */
 async function handleBlobCheck(request, env, auth) {
   if (!env.BLOBS) return json({ error: 'no R2 bucket bound' }, 503);
-  const body = parseJson(auth.body);
+  const body = parseJson(auth.text());
   const hashes = (body && body.hashes) || [];
   if (!Array.isArray(hashes)) return json({ error: 'hashes must be an array' }, 400);
 
@@ -454,13 +469,13 @@ async function handleBlobPut(request, env, auth, sha) {
   if (!env.BLOBS) return json({ error: 'no R2 bucket bound' }, 503);
   if (!isSha256(sha)) return json({ error: 'key must be a sha256 hex digest' }, 400);
 
-  const bytes = new Uint8Array(await request.arrayBuffer());
-  if (bytes.byteLength > MAX_BLOB) return json({ error: 'file too large' }, 413);
+  const bytes = auth.bytes;
+  if (!bytes.byteLength) return json({ error: 'empty body' }, 400);
 
   // Verify the content actually hashes to the key it is being stored under.
   // Without this a buggy or hostile client can poison the address space, and
   // every future deduplication against that hash returns the wrong bytes.
-  const actual = hex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
+  const actual = await sha256Bytes(bytes);
   if (actual !== sha.toLowerCase()) {
     return json({ error: 'content does not match the hash in the key' }, 400);
   }
@@ -500,9 +515,8 @@ function hexToBytes(s) {
   return out;
 }
 
-async function sha256Hex(text) {
-  return hex(new Uint8Array(await crypto.subtle.digest(
-    'SHA-256', new TextEncoder().encode(text))));
+async function sha256Bytes(bytes) {
+  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
 }
 
 function b64urlToBytes(s) {
