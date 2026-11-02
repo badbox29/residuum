@@ -22,10 +22,21 @@
  *   DB               D1 database (run schema.sql once)
  *   KV               KV namespace — write keys and rate limiting
  *   BLOBS            R2 bucket — photos, manuals, receipts
- *   HMAC_SALT        secret, 64 hex chars. NEVER change it after first use.
  *   GOOGLE_CLIENT_ID variable, optional — enables Google sign-in
  *   ALLOWED_ORIGINS  variable, optional — comma-separated, restricts CORS
  */
+
+/**
+ * Shared with the client (js/sync.js). Both sides must derive identically or
+ * no signature ever verifies.
+ *
+ * Not a secret, and does not need to be: an HKDF salt is public by design,
+ * and the write key it is applied to is already 256 bits of CSPRNG output.
+ * The secret here is the write key, which is generated server-side, stored in
+ * KV, and handed to a device once over HTTPS.
+ */
+const HMAC_SALT = 'residuum-hmac-v1';
+const HMAC_INFO = 'residuum-request-v1';
 
 const MAX_BODY = 1_048_576;        // 1 MB of operations per push
 const MAX_BLOB = 20 * 1024 * 1024; // 20 MB per uploaded file
@@ -267,20 +278,19 @@ async function verifyGoogleToken(jwt, clientId) {
 // wrote to exactly one key; with per-record routes, a signature for one path
 // would otherwise be replayable against another inside the clock-skew window.
 
-async function signingKey(env, writeKey) {
+async function signingKey(writeKey) {
   const base = await crypto.subtle.importKey(
     'raw', new TextEncoder().encode(writeKey), 'HKDF', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
     {
       name: 'HKDF', hash: 'SHA-256',
-      salt: new TextEncoder().encode(env.HMAC_SALT || ''),
-      info: new TextEncoder().encode('residuum-request-v1'),
+      salt: new TextEncoder().encode(HMAC_SALT),
+      info: new TextEncoder().encode(HMAC_INFO),
     },
     base, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
 }
 
 async function authenticate(request, env, url) {
-  if (!env.HMAC_SALT) return { ok: false, status: 503, error: 'HMAC_SALT is not set' };
   if (!env.KV) return { ok: false, status: 503, error: 'KV is not bound' };
 
   const accountId = request.headers.get('X-Account');
@@ -305,7 +315,7 @@ async function authenticate(request, env, url) {
   if (body.length > MAX_BODY) return { ok: false, status: 413, error: 'body too large' };
 
   const message = [request.method, url.pathname, accountId, timestamp, await sha256Hex(body)].join(':');
-  const key = await signingKey(env, writeKey);
+  const key = await signingKey(writeKey);
   const valid = await crypto.subtle.verify(
     'HMAC', key, hexToBytes(signature), new TextEncoder().encode(message));
 
