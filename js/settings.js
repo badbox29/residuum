@@ -10,6 +10,7 @@
 import { el, mount, facts } from './dom.js';
 import * as sync from './sync.js';
 import * as store from './store.js';
+import { toSvg, ECC } from './qr.js';
 
 export async function renderSettings(root) {
   const cfg = await sync.getConfig();
@@ -233,19 +234,27 @@ async function pairingSection(cfg) {
     const link = await sync.pairingLink();
     mount(body,
       el('p.note.bad', {},
-        'Anyone holding these can read and change your whole archive. ' +
-        'Treat them like a password.'),
+        'Anyone holding these can read and change your whole archive — including ' +
+        'anyone who photographs this code. Treat it like a password.'),
 
       el('div.field', {},
-        el('label', {}, 'Open this on the other device'),
+        el('label', {}, 'Point the other device at this'),
+        // Level M: enough redundancy to survive a camera at an angle on a
+        // slightly dirty screen, without pushing the symbol big enough to be
+        // hard to frame.
+        el('div.qr', { html: toSvg(link, { ecc: ECC.M, size: 260, label: 'Pairing code' }) }),
+        el('p.hint', {}, 'Open the camera on your phone and hold it up. No app needed.')),
+
+      el('details.more', {},
+        el('summary', {}, 'Or send yourself a link'),
         el('code.code-block', {}, link),
         el('p.hint', {},
-          'One tap connects it. Send it to yourself however you like — the secret ' +
-          'part sits after the # and is never sent to a web server.'),
+          'The secret part sits after the #, which browsers never transmit — so ' +
+          'mailing this to yourself does not hand the key to whoever hosts the page.'),
         copyRow(link, 'Copy link')),
 
-      el('div.field', {},
-        el('label', {}, 'Or type these in by hand'),
+      el('details.more', {},
+        el('summary', {}, 'Or type them in by hand'),
         el('p.hint', {}, 'Account'),
         el('code.code-block', {}, cfg.accountId),
         el('p.hint', {}, 'Write key'),
