@@ -146,6 +146,58 @@ export async function clearCredentials() {
   setState(SyncState.OFF);
 }
 
+// ── Pairing ─────────────────────────────────────────────────────────────────
+
+/**
+ * Pack this device's credentials into a link another device can open.
+ *
+ * The payload rides in the URL fragment, which browsers never send to a
+ * server — so even though the link passes through mail or a messaging app,
+ * the write key is not handed to whoever hosts the page it points at.
+ *
+ * It is still a secret in plain sight: anyone holding this link has full
+ * access to the archive. The UI says so.
+ */
+export async function pairingLink(origin = location.href) {
+  const { url, accountId, writeKey } = await getConfig();
+  if (!url) return null;
+  const payload = b64url(JSON.stringify({ u: url, a: accountId, k: writeKey }));
+  return `${origin.split('#')[0]}#pair/${payload}`;
+}
+
+export function readPairingPayload(encoded) {
+  try {
+    const { u, a, k } = JSON.parse(unb64url(encoded));
+    if (!u || !a || !k) return null;
+    return { url: u, accountId: a, writeKey: k };
+  } catch {
+    return null;
+  }
+}
+
+/** Adopt credentials from a pairing link, after checking they actually work. */
+export async function pairFrom({ url, accountId, writeKey }) {
+  await probe(url);
+  await saveCredentials(normalizeUrl(url), accountId, writeKey);
+  const res = await apiFetch('GET', '/sync?since=0&limit=1');
+  if (!res.ok) {
+    await clearCredentials();
+    throw new Error('those credentials were not accepted by that Worker');
+  }
+  start();
+  return { accountId };
+}
+
+const b64url = str =>
+  btoa(String.fromCharCode(...new TextEncoder().encode(str)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+function unb64url(s) {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(b64 + '='.repeat((4 - b64.length % 4) % 4));
+  return new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
+}
+
 // ── Request signing ─────────────────────────────────────────────────────────
 //
 // Writes are signed with the write key, not with a sign-in session. A Google

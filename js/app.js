@@ -10,7 +10,7 @@
 import { el, mount, ago } from './dom.js';
 import * as store from './store.js';
 import * as sync from './sync.js';
-import { renderSettings } from './settings.js';
+import { renderSettings, renderPair } from './settings.js';
 import { renderAssets, renderAsset, renderAssetForm, renderEventForm } from './assets.js';
 import { renderVendors, renderVendor, renderVendorForm } from './vendors.js';
 
@@ -34,6 +34,9 @@ function resolve(hash) {
   if (head === 'vendor-new')                  return { nav: 'vendors', render: r => renderVendorForm(r) };
   if (head === 'vendors')                     return { nav: 'vendors', render: renderVendors };
 
+  // A pairing link lands here. The payload is in the fragment, so it never
+  // reached a server on its way.
+  if (head === 'pair' && a)                   return { nav: 'settings', render: r => renderPair(r, a) };
   if (head === 'settings')                    return { nav: 'settings', render: renderSettings };
   return { nav: 'assets', render: renderAssets };
 }
